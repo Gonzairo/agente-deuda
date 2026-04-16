@@ -20,7 +20,7 @@ def extraer_y_guardar_eecc(pdf_bytes: bytes, numero: str) -> dict:
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=1000,
         messages=[{
             "role": "user",
