@@ -8,7 +8,11 @@ from config import ANTHROPIC_API_KEY
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 def descargar_pdf(url: str, twilio_sid: str, twilio_token: str) -> bytes:
-    response = httpx.get(url, auth=(twilio_sid, twilio_token))
+    response = httpx.get(
+        url,
+        auth=(twilio_sid, twilio_token),
+        follow_redirects=True
+    )
     response.raise_for_status()
     return response.content
 
