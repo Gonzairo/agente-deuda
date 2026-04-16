@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, Response, Request
+from fastapi import FastAPI, Response, Request
 from twilio.twiml.messaging_response import MessagingResponse
 from agent import procesar_mensaje, registrar_perfil_desde_texto
 from pdf_parser import descargar_pdf, extraer_y_guardar_eecc
@@ -17,13 +17,28 @@ async def webhook(request: Request):
     num_media = int(form.get("NumMedia", 0))
     twiml     = MessagingResponse()
 
+    print(f"DEBUG numero: {numero}")
+    print(f"DEBUG texto: {texto}")
+    print(f"DEBUG num_media: {num_media}")
+
     # — PDF adjunto —
     if num_media > 0:
         media_url          = form.get("MediaUrl0", "")
         media_content_type = form.get("MediaContentType0", "")
-        if "pdf" in media_content_type:
+
+        print(f"DEBUG media_url: {media_url}")
+        print(f"DEBUG media_content_type: {media_content_type}")
+
+        es_pdf = (
+            "pdf" in media_content_type or
+            "octet-stream" in media_content_type or
+            media_url.lower().endswith(".pdf")
+        )
+
+        if es_pdf:
             try:
                 pdf_bytes = descargar_pdf(media_url, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                print(f"DEBUG pdf_bytes size: {len(pdf_bytes)}")
                 datos     = extraer_y_guardar_eecc(pdf_bytes, numero)
                 productos = datos.get("productos", [])
                 detalle   = "\n".join(
@@ -37,9 +52,15 @@ async def webhook(request: Request):
                     f"Total acumulado: *${total:,.0f}/mes* ✅"
                 )
             except Exception as e:
-                respuesta = "No pude leer el PDF. Verifica que sea un estado de cuenta y vuelve a intentarlo."
+                print(f"ERROR procesando PDF: {e}")
+                import traceback
+                traceback.print_exc()
+                respuesta = f"No pude leer el PDF. Error: {str(e)[:100]}"
         else:
-            respuesta = "Solo proceso PDFs por ahora."
+            respuesta = (
+                f"Recibí un archivo de tipo: {media_content_type}\n"
+                f"Por ahora solo proceso PDFs. Envía tu estado de cuenta en PDF."
+            )
 
         twiml.message(respuesta)
         return Response(content=str(twiml), media_type="application/xml")
