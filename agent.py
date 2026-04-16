@@ -96,7 +96,7 @@ def procesar_mensaje(numero: str, texto: str, historial: list[dict]) -> str:
     messages = historial[-10:] + [{"role": "user", "content": texto}]
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=400,
         system=system,
         messages=messages
