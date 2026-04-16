@@ -63,6 +63,12 @@ Reglas:
         }],
     )
 
-    datos = json.loads(response.content[0].text.strip())
-    guardar_instituciones(numero, datos["institucion"], datos["productos"])
-    return datos
+    texto_respuesta = response.content[0].text.strip()
+print(f"DEBUG Claude respuesta: {texto_respuesta[:500]}")
+
+# Extraer JSON aunque venga con texto alrededor
+import re
+match = re.search(r'\{.*\}', texto_respuesta, re.DOTALL)
+if not match:
+    raise ValueError(f"Claude no devolvió JSON válido: {texto_respuesta[:200]}")
+datos = json.loads(match.group())
