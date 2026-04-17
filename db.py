@@ -9,12 +9,13 @@ def leer_perfil(numero: str) -> dict | None:
     r = get_db().table("perfil").select("*").eq("numero", numero).execute()
     return r.data[0] if r.data else None
 
-def guardar_perfil_base(numero: str, ingreso: float, gastos: float):
+def guardar_perfil_base(numero: str, ingreso: float, gastos: float, meta_ahorro_pct: float = 0.15):
     get_db().table("perfil").upsert({
-        "numero":  numero,
-        "ingreso": ingreso,
-        "gastos":  gastos,
-        "fecha":   datetime.now().isoformat()
+        "numero":          numero,
+        "ingreso":         ingreso,
+        "gastos":          gastos,
+        "meta_ahorro_pct": meta_ahorro_pct,
+        "fecha":           datetime.now().isoformat()
     }).execute()
 
 def leer_instituciones(numero: str) -> list[dict]:
@@ -31,13 +32,13 @@ def guardar_instituciones(numero: str, institucion: str, productos: list[dict],
       .execute()
     rows = [
         {
-            "numero":           numero,
-            "institucion":      institucion,
-            "producto":         p.get("nombre", "Sin nombre"),
-            "cuota":            p["cuota_mensual"],
-            "monto_facturado":  monto_facturado,
-            "monto_minimo":     monto_minimo,
-            "fecha":            datetime.now().isoformat()
+            "numero":          numero,
+            "institucion":     institucion,
+            "producto":        p.get("nombre", "Sin nombre"),
+            "cuota":           p["cuota_mensual"],
+            "monto_facturado": monto_facturado,
+            "monto_minimo":    monto_minimo,
+            "fecha":           datetime.now().isoformat()
         }
         for p in productos if p.get("cuota_mensual")
     ]
