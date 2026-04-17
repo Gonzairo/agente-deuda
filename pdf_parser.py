@@ -3,7 +3,7 @@ import httpx
 import base64
 import json
 import re
-from db import guardar_instituciones
+from db import guardar_instituciones, guardar_vencimientos
 from config import ANTHROPIC_API_KEY
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -22,7 +22,7 @@ def extraer_y_guardar_eecc(pdf_bytes: bytes, numero: str) -> dict:
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=1000,
+        max_tokens=1500,
         messages=[{
             "role": "user",
             "content": [
@@ -43,22 +43,34 @@ Responde ÚNICAMENTE con JSON válido, sin texto adicional, sin backticks:
 {
   "institucion": "nombre exacto del banco o institución",
   "periodo": "mes/año del estado de cuenta",
+  "monto_total_facturado": 5839046,
+  "monto_minimo_pagar": 274979,
   "productos": [
     {
       "nombre": "descripción del producto",
-      "cuota_mensual": 150000,
-      "saldo_pendiente": 900000,
-      "cuotas_restantes": 6
+      "cuota_mensual": 86443,
+      "saldo_pendiente": 1555980,
+      "cuotas_restantes": 2
     }
   ],
-  "total_cuotas_mensuales": 150000
+  "total_cuotas_mensuales": 275186,
+  "vencimientos_proximos": {
+    "mes_1": 275186,
+    "mes_2": 275186,
+    "mes_3": 188743,
+    "mes_4": 160648
+  }
 }
 
 Reglas:
-- Solo cuotas o pagos mínimos que debe pagar este mes
-- Ignora saldo rotativo de tarjeta de crédito
-- Montos como enteros sin puntos ni símbolos
-- Si hay múltiples productos con cuota inclúyelos todos"""
+- En "productos" incluye SOLO transacciones en cuotas (créditos, compras en cuotas)
+- NO incluyas gastos en una cuota (Netflix, Uber, supermercado, etc.)
+- NO incluyas intereses ni comisiones en productos
+- "monto_total_facturado" es el total a pagar este mes
+- "monto_minimo_pagar" es el pago mínimo indicado
+- "vencimientos_proximos" son las cuotas de los próximos 4 meses si aparecen
+- Si no hay vencimientos próximos usa null
+- Montos como enteros sin puntos ni símbolos"""
                 }
             ],
         }],
@@ -67,15 +79,23 @@ Reglas:
     texto = response.content[0].text.strip()
     print(f"DEBUG Claude respuesta: {texto[:300]}")
 
-    # Limpiar backticks si el modelo los incluye
     texto = texto.replace("```json", "").replace("```", "").strip()
 
-    # Extraer JSON aunque venga con texto alrededor
     match = re.search(r'\{.*\}', texto, re.DOTALL)
     if not match:
         raise ValueError(f"Sin JSON válido: {texto[:200]}")
 
     datos = json.loads(match.group())
-    guardar_instituciones(numero, datos["institucion"], datos["productos"])
-    return datos
 
+    guardar_instituciones(
+        numero,
+        datos["institucion"],
+        datos["productos"],
+        monto_facturado=datos.get("monto_total_facturado", 0),
+        monto_minimo=datos.get("monto_minimo_pagar", 0)
+    )
+
+    if datos.get("vencimientos_proximos"):
+        guardar_vencimientos(numero, datos["institucion"], datos["vencimientos_proximos"])
+
+    return datos
