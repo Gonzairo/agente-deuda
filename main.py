@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Response, Request
 from fastapi.background import BackgroundTasks
 from twilio.twiml.messaging_response import MessagingResponse
-from agent import procesar_mensaje, registrar_perfil_desde_texto
+from agent import procesar_mensaje, registrar_perfil_desde_texto, mostrar_ahorro
 from pdf_parser import descargar_pdf, extraer_y_guardar_eecc
 from db import leer_instituciones, calcular_total_cuotas, eliminar_institucion
 from config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
@@ -12,7 +12,6 @@ app = FastAPI()
 historiales: dict[str, list[dict]] = {}
 
 async def procesar_pdf_background(media_url: str, numero: str):
-    """Procesa el PDF en background y manda mensaje proactivo al terminar."""
     try:
         pdf_bytes = descargar_pdf(media_url, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         datos     = extraer_y_guardar_eecc(pdf_bytes, numero)
@@ -21,9 +20,9 @@ async def procesar_pdf_background(media_url: str, numero: str):
             f"  • {p['nombre']}: *${p['cuota_mensual']:,}*/mes"
             for p in productos if p.get("cuota_mensual")
         )
-        total     = calcular_total_cuotas(numero)
-        venc      = datos.get("vencimientos_proximos")
-        venc_txt  = ""
+        total    = calcular_total_cuotas(numero)
+        venc     = datos.get("vencimientos_proximos")
+        venc_txt = ""
         if venc:
             venc_txt = (
                 f"\n\nPróximos 4 meses: "
@@ -42,13 +41,12 @@ async def procesar_pdf_background(media_url: str, numero: str):
         print(f"ERROR procesando PDF: {e}")
         respuesta = "No pude leer el PDF. Verifica que sea un estado de cuenta y vuelve a intentarlo."
 
-    # Enviar mensaje proactivo via Twilio REST API
     async with httpx.AsyncClient() as client:
         await client.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
             auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
             data={
-                "From": f"whatsapp:+14155238886",
+                "From": "whatsapp:+14155238886",
                 "To":   f"whatsapp:{numero}",
                 "Body": respuesta
             }
@@ -66,15 +64,12 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     if num_media > 0:
         media_url          = form.get("MediaUrl0", "")
         media_content_type = form.get("MediaContentType0", "")
-
         es_pdf = (
             "pdf" in media_content_type or
             "octet-stream" in media_content_type or
             media_url.lower().endswith(".pdf")
         )
-
         if es_pdf:
-            # Responde inmediato y procesa en background
             twiml.message("Recibí tu estado de cuenta, analizando... ⏳\nTe aviso cuando esté listo.")
             background_tasks.add_task(procesar_pdf_background, media_url, numero)
         else:
@@ -103,6 +98,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             total = calcular_total_cuotas(numero)
             lineas.append(f"\nTotal: *${total:,.0f}/mes*")
             respuesta = "\n".join(lineas)
+
+    elif texto_lower == "mi ahorro":
+        respuesta = mostrar_ahorro(numero)
 
     elif texto_lower.startswith("eliminar "):
         inst = texto[9:].strip()
