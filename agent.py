@@ -208,6 +208,18 @@ def procesar_mensaje(numero: str, texto: str, historial: list[dict]) -> str:
         if not perfil:
             guardar_historial(numero, texto, MENSAJE_BIENVENIDA)
             return MENSAJE_BIENVENIDA
+        cuotas   = calcular_total_cuotas(numero)
+        ingreso  = float(perfil["ingreso"])
+        tope     = ingreso * MARGEN_MAX_PCT
+        margen   = max(0.0, tope - cuotas)
+        bienvenida = (
+            f"👋 ¡Bienvenido de vuelta!\n\n"
+            f"Tu margen disponible: *${margen:,.0f}/mes*\n"
+            f"Cuotas actuales: *${cuotas:,.0f}/mes* ({round(cuotas/ingreso*100,1)}% del ingreso)\n\n"
+            f"Pregúntame algo, ej: _¿Puedo comprar X en Y cuotas?_"
+        )
+        guardar_historial(numero, texto, bienvenida)
+        return bienvenida
 
     system   = construir_system_prompt(numero)
     messages = historial[-10:] + [{"role": "user", "content": texto}]
