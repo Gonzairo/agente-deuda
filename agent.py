@@ -6,9 +6,11 @@ import re
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
+META_AHORRO_DEFAULT = 0.15
+
 MENSAJE_BIENVENIDA = """👋 Hola, soy tu asistente financiero personal.
 
-Te ayudo a saber cuánto margen tienes para endeudarte.
+Te ayudo a evaluar si puedes asumir un nuevo gasto o deuda.
 
 *Para empezar necesito dos cosas:*
 
@@ -28,8 +30,10 @@ Te ayudo a saber cuánto margen tienes para endeudarte.
 
 *Comandos útiles:*
    • mis deudas → ver resumen de tus cuotas actuales
+   • mi ahorro → ver o cambiar tu meta de ahorro
    • eliminar [institución] → borrar una institución
-   • registrar ingreso X gastos Y → actualizar tu perfil"""
+   • registrar ingreso X gastos Y → actualizar tu perfil
+   • registrar ingreso X gastos Y ahorro Z → con meta de ahorro personalizada"""
 
 def construir_system_prompt(numero: str) -> str:
     perfil        = leer_perfil(numero)
@@ -38,20 +42,20 @@ def construir_system_prompt(numero: str) -> str:
     vencimientos  = leer_vencimientos(numero)
 
     if perfil and float(perfil.get("ingreso", 0)) > 0:
-        ingreso     = float(perfil["ingreso"])
-        gastos      = float(perfil["gastos"])
-        tope        = ingreso * MARGEN_MAX_PCT
-        margen      = max(0.0, tope - cuotas_total)
-        ingreso_lib = ingreso - gastos - cuotas_total
-        pct         = round(cuotas_total / ingreso * 100, 1)
+        ingreso          = float(perfil["ingreso"])
+        gastos           = float(perfil["gastos"])
+        meta_ahorro_pct  = float(perfil.get("meta_ahorro_pct") or META_AHORRO_DEFAULT)
+        meta_ahorro      = ingreso * meta_ahorro_pct
+        tope             = ingreso * MARGEN_MAX_PCT
+        margen           = max(0.0, tope - cuotas_total)
+        ingreso_lib      = ingreso - gastos - cuotas_total - meta_ahorro
+        pct              = round(cuotas_total / ingreso * 100, 1)
 
         detalle = "\n".join(
             f"  - {r['institucion']} / {r['producto']}: ${float(r['cuota']):,.0f}/mes"
-            f" (faltan {r.get('cuotas_restantes', '?')} cuotas)"
             for r in instituciones
         ) or "  (ninguna registrada)"
 
-        # Facturado por institución
         facturados = {}
         for r in instituciones:
             inst = r["institucion"]
@@ -62,7 +66,6 @@ def construir_system_prompt(numero: str) -> str:
             for inst, monto in facturados.items()
         ) or "  (sin datos)"
 
-        # Vencimientos próximos
         if vencimientos:
             lineas_venc = []
             for v in vencimientos:
@@ -77,17 +80,27 @@ def construir_system_prompt(numero: str) -> str:
         else:
             contexto_venc = ""
 
+        # Alerta si ingreso libre es bajo
+        if ingreso_lib < 0:
+            alerta_lib = f"⚠️ ATENCIÓN: con ahorro incluido el ingreso libre es NEGATIVO (${ingreso_lib:,.0f})"
+        elif ingreso_lib < ingreso * 0.05:
+            alerta_lib = f"⚠️ Ingreso libre muy ajustado: ${ingreso_lib:,.0f}/mes tras ahorro"
+        else:
+            alerta_lib = ""
+
         contexto = f"""
 Perfil financiero del usuario:
 - Ingreso neto mensual: ${ingreso:,.0f}
 - Gastos fijos mensuales: ${gastos:,.0f}
+- Meta de ahorro ({int(meta_ahorro_pct*100)}%): ${meta_ahorro:,.0f}/mes — es aporte patrimonial, NO un gasto
 - Cuotas actuales ({pct}% del ingreso):
 {detalle}
 - Total cuotas: ${cuotas_total:,.0f}/mes
 - Margen disponible para nueva deuda: ${margen:,.0f}/mes
-- Ingreso libre tras todo: ${ingreso_lib:,.0f}/mes
+- Ingreso libre real (tras gastos + cuotas + ahorro): ${ingreso_lib:,.0f}/mes
+{alerta_lib}
 
-Facturado último mes por institución:
+Facturado último mes:
 {detalle_facturado}
 
 {contexto_venc}
@@ -112,24 +125,25 @@ Tu único propósito es responder preguntas como:
 
 Reglas estrictas:
 - Si la pregunta NO es sobre asumir un nuevo gasto o deuda → responde SOLO: "Solo puedo ayudarte a evaluar si puedes asumir un nuevo gasto o deuda. Pregúntame algo como: ¿puedo comprar X en Y cuotas?"
-- Si no tienes perfil del usuario → pídele que registre sus datos primero
-- NUNCA des consejos de inversión, ahorro, impuestos u otros temas financieros
-- NUNCA respondas preguntas fuera del ámbito financiero personal
+- NUNCA des consejos de inversión, ahorro, impuestos u otros temas
+- NUNCA respondas preguntas fuera del ámbito de nuevos gastos o deudas
 - NUNCA hagas preguntas de vuelta — solo analiza y responde
 
 Reglas de cálculo:
 - Tope saludable: {int(MARGEN_MAX_PCT*100)}% del ingreso en cuotas
+- El ahorro es meta patrimonial — se muestra como contexto pero no bloquea la deuda
+- Si una nueva cuota deja el ingreso libre bajo $0 después del ahorro → advertir aunque el % sea aceptable
 - Cuota sin interés = precio ÷ cuotas
 - Cuota con interés sin tasa → asume 18% anual, calcula cuota francesa
-- Considera vencimientos próximos para recomendaciones temporales
 
 Formato de respuesta (siempre este orden):
-1. SÍ/NO/DEPENDE en la primera línea
+1. SÍ / NO / DEPENDE en la primera línea
 2. Cuota mensual calculada
 3. Endeudamiento resultante en %
-4. Una recomendación concreta de máximo 2 líneas
+4. Ingreso libre tras ahorro
+5. Una recomendación concreta de máximo 2 líneas
 
-Formato WhatsApp: *negrita* para números clave, máximo 6 líneas en total."""
+Formato WhatsApp: *negrita* para números clave, máximo 7 líneas en total."""
 
 def registrar_perfil_desde_texto(numero: str, texto: str) -> str:
     def extraer(clave):
@@ -138,32 +152,57 @@ def registrar_perfil_desde_texto(numero: str, texto: str) -> str:
 
     ingreso = extraer("ingreso")
     gastos  = extraer("gastos")
+    ahorro  = extraer("ahorro")
 
     if not ingreso or gastos is None:
         return (
             "No pude leer los datos. Usa este formato:\n\n"
-            "registrar ingreso 1500000 gastos 700000"
+            "registrar ingreso 1500000 gastos 700000\n"
+            "O con meta de ahorro personalizada:\n"
+            "registrar ingreso 1500000 gastos 700000 ahorro 20"
         )
 
-    guardar_perfil_base(numero, ingreso, gastos)
-    tope   = ingreso * MARGEN_MAX_PCT
-    cuotas = calcular_total_cuotas(numero)
-    margen = max(0.0, tope - cuotas)
+    # ahorro viene como porcentaje (ej: 20 → 0.20)
+    if ahorro is not None:
+        meta_ahorro_pct = ahorro / 100 if ahorro > 1 else ahorro
+    else:
+        meta_ahorro_pct = META_AHORRO_DEFAULT
+
+    guardar_perfil_base(numero, ingreso, gastos, meta_ahorro_pct)
+
+    tope        = ingreso * MARGEN_MAX_PCT
+    cuotas      = calcular_total_cuotas(numero)
+    margen      = max(0.0, tope - cuotas)
+    meta_monto  = ingreso * meta_ahorro_pct
 
     return (
         f"Perfil registrado ✅\n\n"
         f"Ingreso neto: *${ingreso:,.0f}*\n"
         f"Gastos fijos: *${gastos:,.0f}*\n"
+        f"Meta ahorro ({int(meta_ahorro_pct*100)}%): *${meta_monto:,.0f}/mes*\n"
         f"Margen disponible: *${margen:,.0f}/mes*\n\n"
-        f"Ahora sube tus estados de cuenta en PDF o pregúntame algo, ej:\n"
+        f"Sube tus estados de cuenta en PDF o pregúntame algo, ej:\n"
         f"_¿Puedo comprar un notebook de $900.000 en 12 cuotas?_"
+    )
+
+def mostrar_ahorro(numero: str) -> str:
+    perfil = leer_perfil(numero)
+    if not perfil or not float(perfil.get("ingreso", 0)):
+        return "No tienes perfil registrado. Usa: registrar ingreso X gastos Y"
+    ingreso         = float(perfil["ingreso"])
+    meta_ahorro_pct = float(perfil.get("meta_ahorro_pct") or META_AHORRO_DEFAULT)
+    meta_monto      = ingreso * meta_ahorro_pct
+    return (
+        f"Tu meta de ahorro actual: *{int(meta_ahorro_pct*100)}%* = *${meta_monto:,.0f}/mes*\n\n"
+        f"Para cambiarla escribe:\n"
+        f"registrar ingreso {int(ingreso)} gastos {int(float(perfil['gastos']))} ahorro 20\n"
+        f"(reemplaza 20 por el % que quieras)"
     )
 
 def procesar_mensaje(numero: str, texto: str, historial: list[dict]) -> str:
     if texto.lower().startswith("registrar"):
         return registrar_perfil_desde_texto(numero, texto)
 
-    # Primera interacción sin perfil → bienvenida
     if not historial:
         perfil = leer_perfil(numero)
         if not perfil:
