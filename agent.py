@@ -1,7 +1,7 @@
 import anthropic
 from db import (leer_perfil, guardar_perfil_base, leer_instituciones,
                 calcular_total_cuotas, guardar_historial, leer_vencimientos)
-from config import MARGEN_MAX_PCT, ANTHROPIC_API_KEY
+from config import MARGEN_MAX_PCT, ANTHROPIC_API_KEY, MODEL
 import re
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -225,7 +225,7 @@ def procesar_mensaje(numero: str, texto: str, historial: list[dict]) -> str:
     messages = historial[-10:] + [{"role": "user", "content": texto}]
 
     response = client.messages.create(
-        model="claude-sonnet-4-5",
+        model=MODEL,
         max_tokens=400,
         system=system,
         messages=messages

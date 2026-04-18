@@ -4,7 +4,7 @@ import base64
 import json
 import re
 from db import guardar_instituciones, guardar_vencimientos
-from config import ANTHROPIC_API_KEY
+from config import ANTHROPIC_API_KEY, MODEL
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -21,7 +21,7 @@ def extraer_y_guardar_eecc(pdf_bytes: bytes, numero: str) -> dict:
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
     response = client.messages.create(
-        model="claude-sonnet-4-5",
+        model=MODEL,
         max_tokens=1500,
         messages=[{
             "role": "user",
